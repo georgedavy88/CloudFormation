@@ -1,0 +1,433 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+  "Description" : "RDSRedShift data pipeline.",
+
+  "Parameters" : {
+
+      "RDSdatabase": {
+      "Default"                     : "test",
+      "Description"                 : "The database name",
+      "Type"                        : "String",
+      "MinLength"                   : "1",
+      "MaxLength"                   : "64",
+      "AllowedPattern"              : "[a-zA-Z][a-zA-Z0-9]*",
+      "ConstraintDescription"       : "must begin with a letter and contain only alphanumeric characters."
+    },
+    "RDSEngine": {
+      "Default"                     : "mysql",
+      "Description"                 : "Database Engine",
+      "Type"                        : "String",
+      "AllowedValues"               : [ "mysql", "mariadb", "oracle-11g", "oracle-12c","postgres","aurora" ],
+      "ConstraintDescription"       : "must select a valid database Engine."
+    },
+    "RDSUsername": {
+      "Default"                     : "awsadmin",
+      "NoEcho"                      : "true",
+      "Description"                 : "The database admin account username",
+      "Type"                        : "String",
+      "MinLength"                   : "1",
+      "MaxLength"                   : "16",
+      "AllowedPattern"              : "[a-zA-Z][a-zA-Z0-9]*",
+      "ConstraintDescription"       : "must begin with a letter and contain only alphanumeric characters."
+    },
+    "RDSPassword": {
+      "Default"                     : "admin123456",
+      "NoEcho"                      : "true",
+      "Description"                 : "The database admin account password",
+      "Type"                        : "String",
+      "MinLength"                   : "1",
+      "MaxLength"                   : "41",
+      "AllowedPattern"              : "[a-zA-Z0-9]*",
+      "ConstraintDescription"       : "must contain only alphanumeric characters."
+    },
+    "RDSClass" : {
+      "Default"                     : "db.t2.medium",
+      "Description"                 : "Database instance class",
+      "Type"                        : "String",
+      "AllowedValues"               : [ "db.t2.micro", "db.t2.small", "db.t2.medium", "db.t2.large", "db.m4.large", "db.m4.xlarge", "db.m4.2xlarge", "db.m4.4xlarge", "db.m4.10xlarge" ],
+      "ConstraintDescription"       : "must select a valid database instance type."
+    },
+    "RDSAllocatedStorage" : {
+      "Default"                     : "5",
+      "Description"                 : "The size of the database (Gb)",
+      "Type"                        : "Number",
+      "MinValue"                    : "5",
+      "MaxValue"                    : "1024",
+      "ConstraintDescription"       : "must be between 5 and 1024Gb."
+    },
+
+    "RedshiftName": {
+      "Default"                     : "rsdb",
+      "Description"                 : "Red Shift database name",
+      "Type"                        : "String",
+      "MinLength"                   : "1",
+      "MaxLength"                   : "64",
+      "AllowedPattern"              : "[a-zA-Z][a-zA-Z0-9]*",
+      "ConstraintDescription"       : "must begin with a letter and contain only alphanumeric characters."
+    },
+    "RedshiftUsername": {
+      "Default"                     : "rsdb",
+      "Description"                 : "Red Shift database name",
+      "Type"                        : "String",
+      "MinLength"                   : "1",
+      "MaxLength"                   : "64",
+      "AllowedPattern"              : "[a-zA-Z][a-zA-Z0-9]*",
+      "ConstraintDescription"       : "must begin with a letter and contain only alphanumeric characters."
+    },
+    "RedshiftPassword": {
+      "Default"                     : "Admin123456",
+      "NoEcho"                      : "true",
+      "Description"                 : "The Redshift database admin account password",
+      "Type"                        : "String",
+      "MinLength"                   : "1",
+      "MaxLength"                   : "41",
+      "AllowedPattern"              : "[a-zA-Z0-9]*",
+      "ConstraintDescription"       : "must contain only alphanumeric characters."
+    },
+    "RedshiftNodeType" : {
+      "Default"                     : "dw.hs1.xlarge",
+      "Description"                 : "Redshift instance type",
+      "Type"                        : "String",
+      "AllowedValues"               : [ "dc1.large", "dw.hs1.xlarge","dw1.xlarge", "dw1.8xlarge", "dw2.large", "dw2.8xlarge"],
+      "ConstraintDescription"       : "must select a valid database instance type."
+    },
+    "RedshiftClusterType" : {
+      "Default"                     : "single-node",
+      "Description"                 : "Redshift instance type",
+      "Type"                        : "String",
+      "AllowedValues"               : [ "single-node", "multi-node"],
+      "ConstraintDescription"       : "must select a valid database instance type."
+    },
+    "NumberOfNodes" : {
+      "Description"                 : "The number of compute nodes in the cluster.",
+      "Type"                        : "Number",
+      "Default"                     : "1"
+    },
+    "RedShiftDB" : {
+      "Type"                        : "String",
+      "Default"                     : "dev",
+      "AllowedPattern"              : "([a-z]|[0-9])+"
+    },
+
+    "S3logBucket":{
+       "Description"                : "S3 Bucket where the data to be copied resides",
+       "Type"                       : "String"
+    }
+  },
+
+  "Mappings" : {
+    "RDSEngineVersionMapping" : {
+      "mysql"                       : { "latest" : "5.7"},
+      "mariadb"                     : { "latest" : "10.0"},
+      "oracle-11g"                  : { "latest" : "11.2.0.4.v10"},
+      "oracle-12c"                  : { "latest" : "12.1.0.2.v6"},
+      "postgres"                    : { "latest" : "9.6"},
+      "aurora"                      : { "latest" : "5.6"}
+      }
+  },
+
+  "Conditions":{
+      "IsMultiNodeCluster" : {"Fn::Equals" : [{ "Ref" : "RedshiftClusterType" }, "multi-node" ]}
+  },
+
+  "Resources" : {
+
+  "VpcId" : {
+      "Type"        : "AWS::EC2::VPC",
+      "Properties"  : {
+        "CidrBlock"                 : "10.0.0.0/16",
+    	  "EnableDnsSupport"          : "true",
+    	  "EnableDnsHostnames"        : "true",
+        "InstanceTenancy"           : "default",
+        "Tags"                      : [ {"Key" : "Name", "Value" : "datalkcf-vpc51"}, {"Key" : "CloudFormationResource", "Value" : "RDStoRedshift-CF"} ]
+         }
+     },
+  "routeTable"   :  {
+        "Type" : "AWS::EC2::RouteTable",
+        "Properties" : {
+          "VpcId"                   : { "Ref" : "VpcId" },
+          "Tags"                    : [ { "Key" : "Name", "Value" : "datalkcf-routeTable" },{"Key" : "CloudFormationResource", "Value" : "RDStoRedshift-CF"} ]
+      }
+  },
+
+  "publicSubnet" : {
+        "Type"        : "AWS::EC2::Subnet",
+        "Properties"  : {
+          "VpcId"                   : { "Ref" : "VpcId" },
+          "CidrBlock"               : "10.0.0.0/24",
+          "AvailabilityZone"        : "us-west-2c",
+          "MapPublicIpOnLaunch"     : "true",
+          "Tags"                    : [ { "Key" : "Name", "Value" : "datalkcf-publicSubnet" }, {"Key" : "CloudFormationResource", "Value" : "RDStoRedshift-CF"} ]
+      }
+    },
+  "privateSubnet" : {
+        "Type"        : "AWS::EC2::Subnet",
+        "Properties"  : {
+          "VpcId"                   : { "Ref" : "VpcId" },
+          "CidrBlock"               : "10.0.1.0/24",
+          "AvailabilityZone"        : "us-west-2a",
+          "MapPublicIpOnLaunch"     : "true",
+          "Tags" : [ { "Key"        : "Name", "Value" : "datalkcf-privateSubnet" }, {"Key" : "CloudFormationResource", "Value" : "RDStoRedshift-CF"} ]
+      }
+    },
+
+  "publicRouteTableAssociation" : {
+        "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+        "Properties" : {
+          "SubnetId"                : { "Ref" : "publicSubnet" },
+          "RouteTableId"            : { "Ref" : "routeTable" }
+      }
+  },
+
+  "privateRouteTableAssociation" : {
+        "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+        "Properties" : {
+          "SubnetId"                : { "Ref" : "privateSubnet" },
+          "RouteTableId"            : { "Ref" : "routeTable" }
+      }
+  },
+
+  "VPCSecurityGroup" : {
+        "Type"        : "AWS::EC2::SecurityGroup",
+        "Properties"  : {
+           "GroupDescription"       : "Security group for RDS DB Instance.",
+           "VpcId"                  : { "Ref" : "VpcId" },
+           "SecurityGroupIngress"   : [ {"CidrIp": "10.0.0.0/16","IpProtocol": "-1"} ],
+           "SecurityGroupEgress"    : [ {"CidrIp": "0.0.0.0/0","IpProtocol": "-1"} ],
+           "Tags"                   : [ { "Key" : "Name", "Value" : "datalkcf-security-grp" }, {"Key" : "CloudFormationResource", "Value" : "RDStoRedshift-CF"} ]
+        }
+    },
+
+  "InternetGateway" : {
+      "Type"        : "AWS::EC2::InternetGateway",
+      "Properties"  : {"Tags" : [ {"Key" : "Name", "Value" : "datalkcf-igw" }, {"Key" : "CloudFormationResource", "Value" : "RDStoRedshift-CF"}]}
+    },
+
+  "AttachGateway" : {
+     "Type"         : "AWS::EC2::VPCGatewayAttachment",
+     "Properties"   : {
+          "VpcId"                   : { "Ref" : "VpcId" },
+          "InternetGatewayId"       : { "Ref" : "InternetGateway" }
+     }
+  },
+
+  "RDSDBSubnetGroup" : {
+      "Type"          : "AWS::RDS::DBSubnetGroup",
+      "Properties"    : {
+        "DBSubnetGroupDescription"  : "Subnets available for the RDS DB Instance",
+        "SubnetIds"                 : [ { "Ref" : "publicSubnet" }, { "Ref" : "privateSubnet" }],
+        "Tags"                      : [ { "Key" : "Name", "Value" : "datalkcf-subnet-grp" }, {"Key" : "CloudFormationResource", "Value" : "RDStoRedshift-CF"} ]
+      }
+    },
+  "RDSDB" : {
+      "Type"          : "AWS::RDS::DBInstance",
+      "Properties"    : {
+        "DBName"                    : { "Ref"   : "RDSdatabase" },
+        "Port"                      : "3306",
+        "AllocatedStorage"          : { "Ref"   : "RDSAllocatedStorage" },
+        "DBInstanceClass"           : { "Ref"   : "RDSClass" },
+        "Engine"                    : { "Ref"   : "RDSEngine"},
+        "EngineVersion"             : { "Fn::FindInMap" : [ "RDSEngineVersionMapping", { "Ref" : "RDSEngine" }, "latest"]},
+        "MasterUsername"            : { "Ref"   : "RDSUsername" } ,
+        "MasterUserPassword"        : { "Ref"   : "RDSPassword" },
+        "StorageType"               : "gp2",
+        "DBSubnetGroupName"         : { "Ref"   : "RDSDBSubnetGroup" },
+        "VPCSecurityGroups"         : [ { "Ref" : "VPCSecurityGroup" } ],
+        "PubliclyAccessible"        : "true",
+        "DBInstanceIdentifier"      : "gdavysnap",
+        "Tags"                      : [ { "Key" : "Name", "Value" : "datalkcf-db" }, {"Key" : "CloudFormationResource", "Value" : "RDStoRedshift-CF"} ]
+      },
+      "DeletionPolicy" : "Delete"
+    },
+
+  "RedshiftCluster"   : {
+    "Type"            : "AWS::Redshift::Cluster",
+    "Properties"      : {
+      "DBName"                      : { "Ref" : "RedshiftName" },
+      "MasterUsername"              : { "Ref" : "RedshiftUsername" },
+      "MasterUserPassword"          : { "Ref" : "RedshiftPassword" },
+      "NodeType"                    : { "Ref" : "RedshiftNodeType" },
+      "ClusterType"                 : { "Ref" : "RedshiftClusterType" },
+      "NumberOfNodes"               : { "Fn::If"  : [ "IsMultiNodeCluster", {"Ref" : "NumberOfNodes"}, {"Ref" : "AWS::NoValue"}]},
+      "ClusterParameterGroupName"   : { "Ref"     : "RedshiftClusterParameterGroup" },
+      "VpcSecurityGroupIds"         : [ { "Ref"   : "VPCSecurityGroup" }] ,
+      "ClusterSubnetGroupName"      : { "Ref" : "RedshiftClusterSubnetGroup" }
+    }
+  },
+  "RedshiftClusterParameterGroup" : {
+      "Type"          : "AWS::Redshift::ClusterParameterGroup",
+      "Properties"    : {
+        "Description"               : "Cluster parameter group",
+        "ParameterGroupFamily"      : "redshift-1.0",
+        "Parameters"                : [ {"ParameterName" : "enable_user_activity_logging", "ParameterValue" : "true"}]
+      }
+    },
+  "RedshiftClusterSubnetGroup" : {
+      "Type"          : "AWS::Redshift::ClusterSubnetGroup",
+      "Properties"    : {
+          "Description"             : "Cluster subnet group",
+          "SubnetIds"               : [ { "Ref" : "privateSubnet" } ]
+        }
+      },
+  "RDStoS3Pipeline":{
+    "Type": "AWS::DataPipeline::Pipeline",
+    "Properties":{
+      "Name"                    : "RDSInputS3Output",
+      "Activate"                : "true",
+      "ParameterObjects"        : [],
+      "ParameterValues"         : [],
+      "PipelineObjects"         : [
+            {
+              "Id"      : "Default",
+              "Name"    : "Default",
+              "Fields"  : [ {"Key": "failureAndRerunMode","StringValue": "CASCADE"},
+                            {"Key": "type","StringValue": "Default"},
+                            {"Key": "resourceRole","StringValue": "DataPipelineDefaultResourceRole"},
+                            {"Key": "role","StringValue": "DataPipelineDefaultRole"},
+                            {"Key": "pipelineLogUri","StringValue":"s3://aws-cloudguru-videos/"},
+                            {"Key": "scheduleType","StringValue":"cron"},
+                            {"Key": "schedule","RefValue": "DefaultSchedule"}]
+            },
+            {
+              "Id"      : "DefaultSchedule",
+              "Name"    : "DefaultSchedule",
+              "Fields"  : [ {"Key": "type","StringValue": "Schedule"},
+                            {"Key": "occurrences", "StringValue": "1"},
+                            {"Key": "period","StringValue": "1 Day"},
+                            {"Key": "startAt","StringValue": "FIRST_ACTIVATION_DATE_TIME"}]
+            },
+            {
+              "Id"      : "Ec2Instance",
+              "Name"    : "Ec2Instance",
+              "Fields"  : [ {"Key": "type","StringValue": "Ec2Resource"},
+                            {"Key": "instanceType",  "StringValue": "t1.micro"},
+                            {"Key": "securityGroupIds","StringValue":{"Ref": "VPCSecurityGroup"}},
+                            {"Key": "subnetId","StringValue":{"Ref": "privateSubnet"}},
+                            {"Key": "terminateAfter","StringValue": "2 Hours"},
+                            {"Key": "resourceRole","StringValue": "DataPipelineDefaultResourceRole"},
+                            {"Key": "role","StringValue": "DataPipelineDefaultRole"}]
+            },
+            {
+              "Id"      : "RDStoS3CopyActivity",
+              "Name"    : "RDStoS3CopyActivity",
+              "Fields"  : [ {"Key": "type","StringValue": "CopyActivity"},
+                            {"Key": "input", "RefValue": "SourceRDSTable"},
+                            {"Key": "output","RefValue": "S3OutputLocation"},
+                            {"Key": "runsOn","RefValue": "Ec2Instance"}]
+            },
+            {
+              "Id"      : "SourceRDSTable",
+              "Name"    : "SourceRDSTable",
+              "Fields"  : [ {"Key": "type","StringValue": "MySqlDataNode"},
+                            {"Key": "table","StringValue": "test"},
+                            {"Key": "username","StringValue": {"Ref":"RDSUsername" }},
+                            {"Key": "*password","StringValue": {"Ref":"RDSPassword" }},
+                            {"Key": "selectQuery","StringValue": "select * from test"},
+                            {"Key": "connectionString","StringValue": { "Fn::Join": [ "", [ "jdbc:mysql://",
+                                                                      { "Fn::GetAtt": [ "RDSDB", "Endpoint.Address" ] },":",
+                                                                      { "Fn::GetAtt": [ "RDSDB", "Endpoint.Port" ] },"/",
+                                                                      { "Ref": "RDSdatabase" }]]}}]
+            },
+            {
+              "Id"      : "S3OutputLocation",
+              "Name"    : "RDStoS3CopyActivity",
+              "Fields"  : [ {"Key": "type","StringValue": "S3DataNode"},
+                            {"Key": "directoryPath", "StringValue": "s3://aws-cloudguru-videos/#{format(@scheduledStartTime, 'YYYY-MM-dd-HH-mm-ss')}"}]
+            }]
+  }
+  },
+  "S3toRedshiftDatapipeline": {
+        "Type": "AWS::DataPipeline::Pipeline",
+        "Properties":{
+          "Name"                    : "S3InputRedshiftOutput",
+          "Activate"                : "true",
+          "ParameterObjects"        : [],
+          "ParameterValues"         : [],
+          "PipelineObjects"         : [
+          {
+            "Id": "RedshiftDatabaseId1",
+            "Name": "redshiftDB01",
+            "Fields": [ {"Key": "databaseName","StringValue": {"Ref":"RedShiftDB" }},
+                        {"Key": "username","StringValue": {"Ref":"RedshiftUsername" }},
+                        {"Key": "*password","StringValue": {"Ref":"RedshiftPassword" }},
+                        {"Key": "type","StringValue":"RedshiftDatabase"},
+                        {"Key": "clusterId","StringValue":{"Ref":"RedshiftCluster"}}]
+          },
+
+          {
+            "Id": "Default",
+            "Name": "Default",
+            "Fields": [ {"Key": "type","StringValue": "Default"},
+                        {"Key": "scheduleType","StringValue": "timeseries"},
+                        {"Key": "failureAndRerunMode","StringValue": "CASCADE"},
+                        {"Key": "role","StringValue": "DataPipelineDefaultRole"},
+                        {"Key": "resourceRole","StringValue": "DataPipelineDefaultResourceRole"},
+                        {"Key": "pipelineLogUri","StringValue": {"Fn::Join" : [ "", [ "s3://",{ "Ref": "S3logBucket"},"/logs" ] ]}}]
+          },
+          {
+            "Id" : "RedshiftDataNodeId1",
+            "Name" : "RedshiftDataNode01",
+            "Fields": [ {"Key": "schedule","RefValue": "ScheduleId1"},
+                        {"Key": "tableName",  "StringValue": "output"},
+                        {"Key": "createTableSql","StringValue": "create table Output (Name VARCHAR(50) NOT NULLPRIMARY KEY);"},
+                        {"Key": "type","StringValue": "RedshiftDataNode"},
+                        {"Key": "database","RefValue": "RedshiftDatabaseId1"}]
+          },
+          {
+            "Id" : "Ec2ResourceId1",
+            "Name" : "Ec2Resource01",
+            "Fields": [ {"Key": "schedule","RefValue": "ScheduleId1"},
+                        {"Key": "securityGroupIds","StringValue":{"Ref": "VPCSecurityGroup"}},
+                        {"Key": "subnetId","StringValue":{"Ref": "privateSubnet"}},
+                        {"Key": "logUri","StringValue":{"Fn::Join" : [ "", [ "s3://",{ "Ref": "S3logBucket"},"/logs" ] ]}},
+                        {"Key": "type","StringValue": "Ec2Resource"},
+                        {"Key": "terminateAfter","StringValue": "5 hours"},
+                        {"Key": "resourceRole","StringValue": "DataPipelineDefaultResourceRole"},
+                        {"Key": "role","StringValue": "DataPipelineDefaultRole"}]
+          },
+          {
+            "Id" : "ScheduleId1",
+            "Name" : "Schedule01",
+            "Fields": [ {"Key": "startAt","StringValue": "FIRST_ACTIVATION_DATE_TIME"},
+                        {"Key": "occurrences","StringValue": "3"},
+                        {"Key": "type","StringValue": "Schedule"},
+                        {"Key": "period","StringValue": "15 minutes"}]
+          },
+          {
+            "Id" : "S3DataNodeId1",
+            "Name" : "S3DataNode01",
+            "Fields": [ {"Key": "schedule","RefValue": "ScheduleId1"},
+                        {"Key": "filePath","StringValue": {"Fn::Join" : [ "", [ "s3://",{ "Ref": "S3logBucket"},"/wordcount","/output" ] ]}},
+                        {"Key": "type","StringValue": "S3DataNode"}]
+          },
+          {
+            "Id" : "RedshiftCopyActivityId1",
+            "Name" : "RedShiftCopyActivity01",
+            "Fields": [ {"Key": "input","RefValue": "S3DataNodeId1"},
+                        {"Key": "schedule","RefValue": "ScheduleId1"},
+                        {"Key": "type","StringValue": "RedshiftCopyActivity"},
+                        {"Key": "insertMode","StringValue": "KEEP_EXISTING"},
+                        {"Key": "runsOn","RefValue": "Ec2ResourceId1"},
+                        {"Key": "output","RefValue": "RedshiftDataNodeId1"}]
+          }
+        ]
+       }
+      }
+  },
+
+  "Outputs" : {
+    "JDBCConnectionString": {
+      "Description"                 : "JDBC connection string for database",
+      "Value"                       : { "Fn::Join": [ "", [ "jdbc:mysql://",
+                                      { "Fn::GetAtt": [ "RDSDB", "Endpoint.Address" ] },":",
+                                      { "Fn::GetAtt": [ "RDSDB", "Endpoint.Port" ] },"/",
+                                      { "Ref": "RDSdatabase" }]]}
+    },
+    "RedshiftClusterEndpoint" : {
+      "Description"                 : "Redshift Cluster endpoint",
+      "Value"                       : { "Fn::Join" : [ ":", [
+                                      { "Fn::GetAtt" : [ "RedshiftCluster", "Endpoint.Address" ] },
+                                      { "Fn::GetAtt" : [ "RedshiftCluster", "Endpoint.Port" ] } ] ] }
+    }
+  }
+}
